@@ -1,5 +1,4 @@
-# Overwritten by provisioning with the per-site worker name.
-name = "site-template-placeholder"
+name = "site-f30imask-com"
 compatibility_date = "2025-05-01"
 
 [assets]
