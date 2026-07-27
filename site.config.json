@@ -1,11 +1,13 @@
 {
-  "name": "Template Site",
-  "niche": "placeholder — overwritten by provisioning",
-  "kind": "content",
-  "domain": "example.com",
+  "name": "F30 i mask",
+  "niche": "The best f30 i masks to protect ones from germs",
+  "kind": "portfolio",
+  "domain": "f30imask.com",
   "canonicalHost": "apex",
-  "cmsApiUrl": "https://example.cms.arsal.app/api/public/v1",
-  "ownerName": "Site Owner",
-  "ownerEmail": "owner@example.com",
-  "generatedAt": "2026-01-01"
+  "cmsApiUrl": "https://f30imask-com.cms.freecoinslink.de/api/public/v1",
+  "ownerName": "Arsal Riaz",
+  "ownerEmail": "arsalriaz34@gmail.com",
+  "generatedAt": "2026-07-27",
+  "preset": "modern",
+  "layout": "classic"
 }
