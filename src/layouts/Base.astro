@@ -1,0 +1,311 @@
+---
+// Base layout — zero client JS (P1), system font stack (P4), critical CSS
+// inlined by Astro (P5), semantic HTML + JSON-LD (K8/AEO).
+import { loadConfig, canonicalHost, fetchSeoSettings, globalSchemaFor, scriptTagsFor, enabledPixels, pixelConsentMode } from "../lib/cms"
+import { presetRootCss, resolvePreset, presetFontFaces, presetFontPreload } from "../lib/presets"
+
+interface Props {
+  title: string
+  description: string
+  path: string             // e.g. "/posts/my-post/"
+  schema?: object | null   // page-specific JSON-LD
+  ogType?: string          // "website" | "article" | "product"
+  ogImage?: string | null  // absolute URL of the social image
+  // V1.2 SEO cockpit overrides. All optional — absent = byte-identical output.
+  robots?: string | null            // e.g. "noindex, nofollow"; absent = no robots meta
+  canonicalOverride?: string | null // absolute URL; absent = computed canonical
+  ogTitle?: string | null           // absent = title
+  ogDescription?: string | null     // absent = description
+}
+
+const {
+  title, description, path, schema = null, ogType = "website", ogImage = null,
+  robots = null, canonicalOverride = null, ogTitle = null, ogDescription = null,
+} = Astro.props
+const config = loadConfig()
+const host = canonicalHost(config)
+const canonical = canonicalOverride ?? `https://${host}${path}`
+const socialTitle = ogTitle ?? title
+const socialDescription = ogDescription ?? description
+// Social image (D5.5): a custom image wins; otherwise every page gets a
+// designed OG card generated at build (scripts/gen-og.mjs) from the preset's
+// palette + typography. The filename is derived from the path so gen-og can
+// find and render it. Absolute URL, as OG requires.
+const ogSlug = (path.replace(/^\/|\/$/g, "").replace(/[^a-z0-9]+/gi, "-") || "home").toLowerCase()
+const ogFinal = ogImage ?? `https://${host}/og/${ogSlug}.png`
+// Global Organization/WebSite schema (S3) — null (no output) unless the site
+// owner enabled it in the SEO Control Center. Byte-identical when off.
+const seoSettings = await fetchSeoSettings(config)
+const globalLd = globalSchemaFor(seoSettings, config.name, `https://${host}`)
+// Vetted site scripts (V1.3): "" when none enabled — byte-identical zero-JS.
+const siteScriptTags = scriptTagsFor(seoSettings)
+// V1.5 M3 (Amendment 4a): the ONE allowed first-party beacon — cookieless,
+// deferred, hash-gated. Emitted only when the owner opted in AND a public site
+// token exists. Ingest is the platform's beacon endpoint, derived from the
+// forms relay base. Off = byte-identical zero-JS.
+const beaconIngest = seoSettings.analyticsEnabled && seoSettings.analyticsKey && config.formsEndpoint
+  ? config.formsEndpoint.replace(/\/api\/saas\/forms\/.*$/, "") + "/api/saas/beacon"
+  : ""
+const year = new Date().getFullYear()
+// V1.5 M4: the baseline consent banner ships (hidden) only when a consent-gated
+// ad pixel is enabled AND EU consent mode is on. The sanctioned loader
+// (/js/site-scripts.js) reveals it for un-consented visitors and wires the
+// buttons — so consented/declined returning visitors never see a flash, and a
+// visitor with JS off simply gets no pixels (fail-safe). This is baseline
+// consent, not a full CMP.
+const showConsentBanner = enabledPixels(seoSettings).length > 0 && pixelConsentMode(seoSettings)
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content={config.darkMode === false ? "light" : "light dark"} />
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  {robots && <meta name="robots" content={robots} />}
+  {/* V1.5 M6: Bing Webmaster verification (also covers DuckDuckGo, which uses
+      Bing's index). Emitted only when the owner pastes a code. */}
+  {seoSettings.bingVerify && <meta name="msvalidate.01" content={seoSettings.bingVerify} />}
+  <link rel="canonical" href={canonical} />
+  {/* Curated typography (D2): preload only the two self-hosted faces this
+      preset uses, so the webfont paints without a swap flash. */}
+  {presetFontPreload(config.preset).map((href) => (
+    <link rel="preload" href={href} as="font" type="font/woff2" crossorigin="anonymous" />
+  ))}
+  <link rel="sitemap" href="/sitemap-index.xml" />
+  <link rel="alternate" type="application/rss+xml" title={config.name} href="/rss.xml" />
+
+  {/* Favicon + PWA manifest (SEO file set, amendment 3). SVG favicon covers
+      modern browsers; genesis adds branded .ico/apple-touch PNGs per niche. */}
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="/site.webmanifest" />
+  <meta name="theme-color" content={resolvePreset(config.preset).accent} />
+
+  {/* Open Graph + Twitter (social + AI-answer surfaces). */}
+  <meta property="og:type" content={ogType} />
+  <meta property="og:site_name" content={config.name} />
+  <meta property="og:title" content={socialTitle} />
+  <meta property="og:description" content={socialDescription} />
+  <meta property="og:url" content={canonical} />
+  <meta property="og:image" content={ogFinal} />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={socialTitle} />
+  <meta name="twitter:description" content={socialDescription} />
+  <meta name="twitter:image" content={ogFinal} />
+
+  {schema && <script type="application/ld+json" set:html={JSON.stringify(schema)} />}
+  {globalLd && <script type="application/ld+json" set:html={JSON.stringify(globalLd)} />}
+  {siteScriptTags && <Fragment set:html={siteScriptTags} />}
+  {beaconIngest && <script src="/a.js" data-ingest={beaconIngest} data-site={seoSettings.analyticsKey} defer></script>}
+  <style set:html={`
+    /* Design system (D1) — CSS variables + a lean content stylesheet. Zero JS
+       (P1); system fonts in D1, curated faces in D2 (P4); CSS stays well under
+       budget (P5). Tokens drive type scale, spacing, elevation and components. */
+    ${presetFontFaces(config.preset)}
+    ${presetRootCss(config.preset, config.darkMode !== false)}
+    *,*::before,*::after { box-sizing:border-box; }
+    html { -webkit-text-size-adjust:100%; }
+    body { margin:0; font-family:var(--font-body); color:var(--fg); background:var(--bg);
+      font-size:var(--fs-base); line-height:var(--lh-body);
+      -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+      font-feature-settings:"kern","liga"; }
+    ::selection { background:var(--accent-soft); }
+    header, main, footer { max-width:var(--maxw); margin-inline:auto; padding-inline:1.25rem; }
+    header { max-width:var(--wide); padding-top:1.6rem; padding-bottom:1.1rem; gap:1rem; }
+    header a.brand { font-family:var(--font-head); font-weight:var(--fw-head); font-size:1.2rem;
+      letter-spacing:var(--ls-head); color:var(--fg); text-decoration:none; }
+    main { padding-bottom:var(--sp-16); }
+
+    h1,h2,h3,h4 { font-family:var(--font-head); font-weight:var(--fw-head);
+      letter-spacing:var(--ls-head); line-height:1.14; text-wrap:balance; margin:0 0 .6em; }
+    h1 { font-size:var(--fs-h1); line-height:1.07; }
+    h2 { font-size:var(--fs-h2); margin-top:1.8em; }
+    h3 { font-size:var(--fs-h3); margin-top:1.5em; }
+    h4 { font-size:var(--fs-h4); margin-top:1.3em; }
+
+    p,ul,ol,blockquote,table,pre { margin:0 0 1.15em; }
+    p { max-width:68ch; }
+    a { color:var(--accent); text-decoration-thickness:1.5px; text-underline-offset:2px;
+      text-decoration-color:var(--accent-line); }
+    a:hover { text-decoration-color:var(--accent); }
+    small,.meta { font-size:var(--fs-sm); color:var(--muted); }
+    strong { font-weight:660; }
+    .lead { font-size:var(--fs-md); color:var(--muted); }
+
+    ul,ol { padding-left:1.3em; } li { margin:.3em 0; }
+    ul li::marker { color:var(--accent); }
+    blockquote { margin-inline:0; padding:.35em 0 .35em 1.1em; border-left:3px solid var(--accent);
+      color:var(--muted); font-size:var(--fs-md); } blockquote p { max-width:none; }
+    hr { border:0; height:1px; background:var(--border); margin:var(--sp-12) 0; }
+
+    img { max-width:100%; height:auto; border-radius:calc(var(--radius) + 2px); }
+    figure { margin:1.6em 0; } figcaption { font-size:var(--fs-sm); color:var(--muted); margin-top:.5em; text-align:center; }
+    code { font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace; font-size:.88em;
+      background:var(--accent-soft); border-radius:5px; padding:.1em .4em; }
+    pre { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+      padding:1em 1.1em; overflow-x:auto; } pre code { background:none; padding:0; }
+    table { width:100%; border-collapse:collapse; font-size:var(--fs-sm); }
+    th,td { text-align:left; padding:.6em .7em; border-bottom:1px solid var(--border); }
+    thead th { border-bottom:2px solid var(--accent-line); font-family:var(--font-head); }
+    tbody tr:nth-child(even) { background:var(--accent-soft); }
+
+    .btn { display:inline-block; background:var(--accent); color:var(--accent-fg); text-decoration:none;
+      font-weight:640; border-radius:var(--radius); padding:.7em 1.35em; line-height:1.2;
+      box-shadow:var(--shadow); transition:transform .15s, filter .15s; }
+    .btn:hover { filter:brightness(1.06); transform:translateY(-1px); }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:calc(var(--radius) + 2px);
+      padding:1.25rem; box-shadow:var(--shadow); transition:transform .15s, box-shadow .15s; }
+    a.card,.card a { text-decoration:none; color:inherit; } a.card:hover { transform:translateY(-2px); }
+    .wide { max-width:var(--wide); }
+
+    /* Section system (D3) — zero-JS, token-driven. Left-aligned by intent. */
+    .eyebrow { display:inline-block; font-family:var(--font-head); font-size:var(--fs-sm);
+      letter-spacing:.14em; text-transform:uppercase; color:var(--accent); font-weight:640; margin-bottom:.55rem; }
+    .hero { padding:var(--sp-12) 0 var(--sp-6); border-bottom:1px solid var(--border); margin-bottom:var(--sp-8); }
+    .hero h1 { margin:0 0 .35em; }
+    .hero .sub { font-size:var(--fs-md); color:var(--muted); max-width:56ch; margin:0; }
+    .actions { display:flex; flex-wrap:wrap; gap:.7rem; margin-top:1.5rem; }
+    .btn.ghost { background:transparent; color:var(--fg); border:1px solid var(--border); box-shadow:none; }
+    .btn.ghost:hover { border-color:var(--accent); color:var(--accent); filter:none; }
+    .section-head { display:flex; align-items:baseline; justify-content:space-between; gap:1rem;
+      margin:0 0 var(--sp-6); }
+    .section-head h2 { margin:0; font-size:var(--fs-h3); }
+    .section-head a { font-size:var(--fs-sm); }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(15rem,1fr)); gap:1.1rem; }
+    .post-card { display:flex; flex-direction:column; padding:1.2rem; height:100%; }
+    .post-card .t { font-family:var(--font-head); font-weight:var(--fw-head); font-size:var(--fs-h4);
+      line-height:1.24; letter-spacing:var(--ls-head); color:var(--fg); }
+    .post-card .x { margin-top:.5rem; color:var(--muted); font-size:var(--fs-sm); line-height:1.55; }
+    .post-card .more { margin-top:auto; padding-top:.9rem; color:var(--accent); font-size:var(--fs-sm); font-weight:600; }
+    .post-list { list-style:none; padding:0; margin:0; }
+    .post-list li { padding:1.3rem 0; border-top:1px solid var(--border); }
+    .post-list li:first-child { border-top:0; }
+    .post-list .t { font-family:var(--font-head); font-weight:var(--fw-head); font-size:var(--fs-h4);
+      letter-spacing:var(--ls-head); text-decoration:none; color:var(--fg); }
+    .post-list .t:hover { color:var(--accent); }
+    .cta-band { margin-top:var(--sp-16); padding:var(--sp-8) var(--sp-6); text-align:center;
+      border-radius:calc(var(--radius) + 6px); background:var(--accent-soft); border:1px solid var(--accent-line); }
+    .cta-band h2 { margin:0 0 .4rem; font-size:var(--fs-h3); }
+    .cta-band p { margin:0 auto 1.2rem; max-width:48ch; color:var(--muted); }
+
+    /* Section component library (D5.1) — all zero-JS, token-styled. Genesis and
+       prompt-edits compose pages from these classes. */
+    .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(16rem,1fr)); gap:1.1rem; }
+    .grid-3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(13rem,1fr)); gap:1.1rem; }
+    /* Testimonials */
+    .quote-card { padding:1.4rem; }
+    .quote-card p { font-size:var(--fs-md); margin:0 0 .9rem; max-width:none; }
+    .quote-card .who { display:flex; align-items:center; gap:.6rem; font-size:var(--fs-sm); }
+    .quote-card .who b { color:var(--fg); } .quote-card .who span { color:var(--muted); }
+    /* Pricing */
+    .price-card { display:flex; flex-direction:column; padding:1.5rem; }
+    .price-card.featured { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent), var(--shadow); }
+    .price-card .amt { font-family:var(--font-head); font-weight:var(--fw-head); font-size:var(--fs-h2);
+      letter-spacing:var(--ls-head); margin:.3rem 0; } .price-card .amt small { font-size:var(--fs-sm); color:var(--muted); font-weight:400; }
+    .price-card ul { list-style:none; padding:0; margin:1rem 0 1.3rem; } .price-card li { padding:.3rem 0; color:var(--muted); }
+    .price-card li::before { content:"✓"; color:var(--accent); font-weight:700; margin-right:.5rem; }
+    .price-card .btn { margin-top:auto; text-align:center; }
+    /* FAQ — native details/summary, no JS */
+    .faq { border-bottom:1px solid var(--border); }
+    .faq summary { cursor:pointer; list-style:none; padding:1rem 0; font-family:var(--font-head);
+      font-weight:var(--fw-head); font-size:var(--fs-h4); letter-spacing:var(--ls-head);
+      display:flex; justify-content:space-between; gap:1rem; align-items:center; }
+    .faq summary::-webkit-details-marker { display:none; }
+    .faq summary::after { content:"+"; color:var(--accent); font-size:1.4em; line-height:1; transition:transform .2s; }
+    .faq[open] summary::after { transform:rotate(45deg); }
+    .faq > *:not(summary) { padding-bottom:1rem; color:var(--muted); margin-top:-.2rem; }
+    /* Stats band */
+    .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(8rem,1fr)); gap:1.2rem; text-align:center; }
+    .stat .n { font-family:var(--font-head); font-weight:var(--fw-head); font-size:var(--fs-h2);
+      letter-spacing:var(--ls-head); color:var(--accent); line-height:1; display:block; }
+    .stat .l { font-size:var(--fs-sm); color:var(--muted); margin-top:.35rem; display:block; }
+    /* Logo strip */
+    .logos { display:flex; flex-wrap:wrap; align-items:center; gap:1.4rem 2rem; justify-content:center; }
+    .logos span, .logos img { color:var(--muted); font-family:var(--font-head); font-weight:600; opacity:.75; filter:grayscale(1); max-height:2rem; }
+    /* Team */
+    .member { text-align:center; padding:1.2rem; }
+    .member img { width:5rem; height:5rem; border-radius:50%; object-fit:cover; margin:0 auto .7rem; display:block; }
+    .member .name { font-family:var(--font-head); font-weight:var(--fw-head); }
+    .member .role { font-size:var(--fs-sm); color:var(--muted); }
+    /* Gallery */
+    .gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(11rem,1fr)); gap:.6rem; }
+    .gallery img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:var(--radius); }
+    /* Timeline */
+    .timeline { border-left:2px solid var(--accent-line); padding-left:1.3rem; margin-left:.3rem; }
+    .timeline-item { position:relative; padding-bottom:1.4rem; }
+    .timeline-item::before { content:""; position:absolute; left:calc(-1.3rem - 6px); top:.35rem;
+      width:9px; height:9px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 3px var(--bg); }
+    .timeline-item .when { font-size:var(--fs-sm); color:var(--accent); font-weight:600; }
+    .timeline-item h3 { margin:.15rem 0 .3rem; }
+
+    /* Motion layer (D5.3) — CSS only, zero JS, fully covenant-safe. Everything
+       is gated behind prefers-reduced-motion:no-preference. Scroll-reveal uses
+       scroll-driven animation-timeline and is additionally wrapped in @supports,
+       so browsers without it (and reduced-motion users) simply see content in
+       its final, visible state — content is NEVER hidden by default. Reveal is
+       opt-in via .reveal and is only used BELOW the hero, so the LCP element is
+       never delayed. Transforms/opacity only ⇒ no layout shift. */
+    @media (prefers-reduced-motion: no-preference) {
+      @supports (animation-timeline: view()) {
+        .reveal { animation: reveal-rise linear both; animation-timeline: view();
+          animation-range: entry 0% entry 55%; }
+        @keyframes reveal-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+      }
+      .btn, .card, a.card, .post-card { will-change: transform; }
+    }
+
+    footer { max-width:var(--wide); border-top:1px solid var(--border); margin-top:var(--sp-16);
+      padding-top:1.4rem; padding-bottom:2.6rem; font-size:var(--fs-sm); color:var(--muted); }
+    footer nav { display:flex; flex-wrap:wrap; gap:.4rem 1.1rem; margin-bottom:.7rem; }
+    footer nav a { color:var(--muted); text-decoration:none; } footer nav a:hover { color:var(--fg); }
+
+    :focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:2px; }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { transition:none !important; animation:none !important; }
+      .btn:hover,.card:hover,a.card:hover { transform:none; } }
+  `} />
+</head>
+<body>
+  <header style="display:flex;justify-content:space-between;align-items:center">
+    <a class="brand" href="/" data-ev="nav:home">{config.name}</a>
+    {config.kind === "ecommerce" && (
+      <nav style="font-size:0.95rem;display:flex;gap:1rem">
+        <a href="/shop/" data-ev="nav:shop" style="text-decoration:none">Shop</a>
+        <a href="/cart/" data-ev="nav:cart" style="text-decoration:none">Cart</a>
+      </nav>
+    )}
+  </header>
+  <main>
+    <slot />
+  </main>
+  <footer>
+    <nav>
+      <a href="/about/" data-ev="nav:about">About</a>
+      <a href="/contact/" data-ev="nav:contact">Contact</a>
+      <a href="/privacy/" data-ev="nav:privacy">Privacy Policy</a>
+      <a href="/terms/" data-ev="nav:terms">Terms of Service</a>
+      <a href="/disclosure/" data-ev="nav:disclosure">Affiliate Disclosure</a>
+      <a href="/cookies/" data-ev="nav:cookies">Cookie Policy</a>
+      <a href="/editorial/" data-ev="nav:editorial">Editorial Policy</a>
+    </nav>
+    <p>© {year} {config.name}. All rights reserved.</p>
+  </footer>
+  {showConsentBanner && (
+    <div id="sn-consent" role="dialog" aria-label="Cookie consent" hidden
+         style="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:var(--surface,#fff);color:var(--fg,#111);border-top:1px solid var(--border,#e5e7eb);box-shadow:0 -2px 12px rgba(0,0,0,.12);padding:.85rem 1rem">
+      <div style="max-width:960px;margin:0 auto;display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;justify-content:space-between">
+        <p style="margin:0;font-size:.9rem;line-height:1.4;flex:1 1 320px">
+          We use marketing cookies to measure ad performance. They load only if you accept.
+          <a href="/privacy/" style="color:var(--accent,#2563eb)">Privacy Policy</a>.
+        </p>
+        <div style="display:flex;gap:.5rem;flex-shrink:0">
+          <button type="button" id="sn-consent-decline"
+            style="background:transparent;color:inherit;border:1px solid var(--border,#cbd5e1);border-radius:6px;padding:.5rem 1rem;font-size:.9rem;cursor:pointer">Decline</button>
+          <button type="button" id="sn-consent-accept"
+            style="background:var(--accent,#2563eb);color:#fff;border:0;border-radius:6px;padding:.5rem 1.1rem;font-size:.9rem;cursor:pointer">Accept</button>
+        </div>
+      </div>
+    </div>
+  )}
+</body>
+</html>

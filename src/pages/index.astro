@@ -1,0 +1,71 @@
+---
+import Base from "../layouts/Base.astro"
+import { loadConfig, fetchAllPosts, canonicalHost, fetchLocations, localBusinessLd } from "../lib/cms"
+
+const config = loadConfig()
+const posts = await fetchAllPosts(config)
+const host = canonicalHost(config)
+
+// Homepage layout variant (V1.1) — static, zero-JS. "magazine" is a card grid;
+// "classic" (default) is the single-column list. Selected at genesis.
+const layout = config.layout === "magazine" ? "magazine" : "classic"
+
+// Local SEO profile (V1.3): the primary location's LocalBusiness node joins
+// the homepage graph. fetchLocations returns [] when the profile is off —
+// byte-identical for every non-local site.
+const locations = await fetchLocations(config)
+const primary = locations.find((l) => l.isPrimary) ?? locations[0]
+const businessLd = primary ? localBusinessLd(primary, `https://${host}/`, `https://${host}/`) : null
+
+const website = {
+  "@type": "WebSite",
+  name: config.name,
+  url: `https://${host}/`,
+  description: config.niche,
+}
+const schema = businessLd
+  ? { "@context": "https://schema.org", "@graph": [website, businessLd] }
+  : { "@context": "https://schema.org", ...website }
+---
+<Base title={config.name} description={config.niche} path="/" schema={schema}>
+  <section class="hero">
+    <h1>{config.name}</h1>
+    <p class="sub">{config.niche}</p>
+    <div class="actions">
+      {config.kind === "ecommerce"
+        ? <a class="btn" href="/shop/">Browse the shop</a>
+        : posts.length > 0 && <a class="btn" href={`/posts/${posts[0].slug}/`}>Read the latest</a>}
+      <a class="btn ghost" href="/contact/">Get in touch</a>
+    </div>
+  </section>
+
+  {posts.length > 0 && (
+    <>
+      <div class="section-head">
+        <h2>Latest</h2>
+        {posts.length > 6 && <a href="/posts/">All articles →</a>}
+      </div>
+      {layout === "magazine" ? (
+        <div class="grid reveal">
+          {posts.slice(0, 9).map((p) => (
+            <a class="card post-card" href={`/posts/${p.slug}/`}>
+              <span class="t">{p.title}</span>
+              {p.excerpt && <span class="x">{p.excerpt}</span>}
+              <span class="more">Read →</span>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <ul class="post-list reveal">
+          {posts.slice(0, 12).map((p) => (
+            <li>
+              <a class="t" href={`/posts/${p.slug}/`}>{p.title}</a>
+              {p.excerpt && <p class="x" style="margin:.35rem 0 0;color:var(--muted);font-size:var(--fs-sm)">{p.excerpt}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  )}
+  {posts.length === 0 && <p class="lead">First articles are on their way.</p>}
+</Base>

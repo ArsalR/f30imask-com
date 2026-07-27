@@ -1,0 +1,122 @@
+---
+import Base from "../../layouts/Base.astro"
+import Img from "../../components/Img.astro"
+import { loadConfig, fetchAllPosts, canonicalHost, extractFaqs, computeRobots, fetchSeoSettings, profileOn, fetchAuthors, personLd, imageObjectLd, extractAeoBlocks, fetchForms, injectFormEmbeds, injectCtaBlocks, type CmsPost } from "../../lib/cms"
+
+export async function getStaticPaths() {
+  const config = loadConfig()
+  const posts = await fetchAllPosts(config)
+  return posts.map((post) => ({ params: { slug: post.slug }, props: { post } }))
+}
+
+interface Props { post: CmsPost }
+const { post } = Astro.props
+const config = loadConfig()
+const host = canonicalHost(config)
+const path = `/posts/${post.slug}/`
+
+// Structured data as a @graph (K4/K8 — AEO). Article carries dateModified;
+// BreadcrumbList aids result presentation; FAQPage is emitted only when the
+// post actually contains ≥2 question-style headings, so AI engines can lift
+// direct Q&A answers.
+// News profile (V1.3 P2): articles default to NewsArticle; an explicit
+// per-post schema type from the cockpit still wins. Author byline + Person
+// node join the graph when an author is assigned.
+const seoSettings = await fetchSeoSettings(config)
+const newsOn = profileOn(seoSettings, "news")
+// Image profile (V1.3 P4): ImageObject with license/creator for the cover
+// image — licensable-images eligibility. Null unless configured.
+const coverImageLd = profileOn(seoSettings, "image") && post.coverImage ? imageObjectLd(post.coverImage, seoSettings) : null
+// AI profile (V1.3 P5): AEO content blocks become schema — the TL;DR feeds the
+// article's abstract, definitions become DefinedTerm nodes, and the focus
+// keyword becomes the article's "about" entity. Absent = today's graph.
+const aiOn = profileOn(seoSettings, "ai")
+const aeo = aiOn ? extractAeoBlocks(post.content) : { tldr: [], definitions: [] }
+const authors = await fetchAuthors(config)
+const author = post.authorId ? authors.find((a) => a.id === post.authorId) : undefined
+const article = {
+  "@type": post.schemaType ?? (newsOn ? "NewsArticle" : "Article"),
+  headline: post.title,
+  description: post.seoDescription ?? post.excerpt ?? "",
+  datePublished: post.publishedAt ?? undefined,
+  dateModified: post.updatedAt ?? post.publishedAt ?? undefined,
+  mainEntityOfPage: `https://${host}${path}`,
+  publisher: { "@type": "Organization", name: config.name },
+  author: author
+    ? { "@type": "Person", name: author.name, url: `https://${host}/authors/${author.slug}/` }
+    : { "@type": "Person", name: config.ownerName },
+  ...(post.coverImage ? { image: [post.coverImage] } : {}),
+  ...(aiOn && aeo.tldr.length ? { abstract: aeo.tldr.join(" ") } : {}),
+  ...(aiOn && post.focusKeyword ? { about: { "@type": "Thing", name: post.focusKeyword } } : {}),
+}
+const definedTerms = aiOn ? aeo.definitions.map((d) => ({ "@type": "DefinedTerm", name: d.term, description: d.definition })) : []
+const breadcrumb = {
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: `https://${host}/` },
+    { "@type": "ListItem", position: 2, name: "Articles", item: `https://${host}/posts/` },
+    { "@type": "ListItem", position: 3, name: post.title, item: `https://${host}${path}` },
+  ],
+}
+// Manual FAQ from the SEO cockpit wins; otherwise auto-extract from headings
+// (byte-identical when the post carries no manual FAQ override).
+const faqs = post.faq && post.faq.length > 0 ? post.faq : extractFaqs(post.content)
+const faqPage =
+  faqs.length >= 2
+    ? {
+        "@type": "FAQPage",
+        mainEntity: faqs.map((f) => ({
+          "@type": "Question",
+          name: f.question,
+          acceptedAnswer: { "@type": "Answer", text: f.answer },
+        })),
+      }
+    : null
+const schema = {
+  "@context": "https://schema.org",
+  "@graph": [article, breadcrumb, ...(faqPage ? [faqPage] : []), ...(author ? [personLd(author, `https://${host}/`)] : []), ...(coverImageLd ? [coverImageLd] : []), ...definedTerms],
+}
+// Robots directive from the cockpit's index/follow toggles. Absent (both off)
+// emits no robots meta at all — exactly today's behavior (rail #3).
+const robots = computeRobots(post.noIndex, post.nofollow)
+// Forms Engine (V1.4): replace <div class="form-embed" data-form="slug"> markers
+// with the static form. Content without markers is untouched (byte-identical).
+const siteForms = await fetchForms(config)
+const contentHtml = injectCtaBlocks(injectFormEmbeds(post.content, siteForms, config, path))
+// Turnstile loads ONLY when an actual form widget landed on the page
+// (CTA-only injections must not pull the script — the zero-JS gate checks).
+const hasFormEmbed = contentHtml.includes("cf-turnstile")
+---
+<Base
+  title={post.seoTitle ?? `${post.title} — ${config.name}`}
+  description={post.seoDescription ?? post.excerpt ?? config.niche}
+  path={path}
+  schema={schema}
+  ogType="article"
+  ogImage={post.ogImage ?? post.coverImage}
+  robots={robots}
+  canonicalOverride={post.canonicalUrl ?? null}
+  ogTitle={post.ogTitle ?? null}
+  ogDescription={post.ogDescription ?? null}
+>
+  <article>
+    <h1>{post.title}</h1>
+    {author && (
+      <p style="color:var(--muted);font-size:0.9rem;margin:0.2rem 0 0.8rem">
+        By <a href={`/authors/${author.slug}/`} style="color:inherit">{author.name}</a>
+        {post.publishedAt && ` · ${post.publishedAt.slice(0, 10)}`}
+      </p>
+    )}
+    {post.excerpt && (
+      <p class="summary" style="font-size:1.05rem;color:#444;border-left:3px solid #0a6152;padding-left:0.9rem">
+        {post.excerpt}
+      </p>
+    )}
+    {post.coverImage && (
+      <Img src={post.coverImage} alt={post.title} width={1200} height={675}
+           priority={true} style="border-radius:8px" />
+    )}
+    <div set:html={contentHtml} />
+  </article>
+  {hasFormEmbed && config.turnstileSitekey && <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>}
+</Base>

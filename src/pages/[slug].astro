@@ -1,0 +1,178 @@
+---
+// Root-level pages at /<slug>/. Two sources, one route (Astro allows only one
+// dynamic segment per directory):
+//   1. The K1 trust-page set (about/contact/privacy/terms/disclosure/cookies/
+//      editorial) — generated site-specifically from site.config.json.
+//   2. CMS Pages (type='page') — e.g. a WordPress migration's About/Contact —
+//      rendered at their real path /<slug>/ so the migrated site keeps the URLs
+//      Google already knows (no /posts/ prefix). A CMS page whose slug matches a
+//      trust slug OVERRIDES the generated one (the owner's real page wins).
+// Sites with no CMS pages build byte-identically to before.
+import Base from "../layouts/Base.astro"
+import {
+  loadConfig, canonicalHost, fetchLocations, localBusinessLd, napBlockHtml,
+  fetchPages, fetchForms, injectFormEmbeds, injectCtaBlocks, computeRobots, type CmsPost,
+} from "../lib/cms"
+
+export async function getStaticPaths() {
+  // Defined inside getStaticPaths — Astro evaluates it in isolation, so it does
+  // not see other module-level consts.
+  const RESERVED = new Set(["posts", "authors", "locations", "forms", "products", "shop", "cart", "order", "js"])
+  const TRUST_SLUGS = ["about", "contact", "privacy", "terms", "disclosure", "cookies", "editorial"]
+  const config = loadConfig()
+  const cmsPages = (await fetchPages(config)).filter((p) => p.slug && !RESERVED.has(p.slug))
+  const cmsSlugs = new Set(cmsPages.map((p) => p.slug))
+  const trustPaths = TRUST_SLUGS
+    .filter((slug) => !cmsSlugs.has(slug)) // a real CMS page overrides the generated trust page
+    .map((slug) => ({ params: { slug }, props: { cms: null as CmsPost | null } }))
+  const cmsPaths = cmsPages.map((page) => ({ params: { slug: page.slug }, props: { cms: page as CmsPost | null } }))
+  return [...trustPaths, ...cmsPaths]
+}
+
+interface Props { cms: CmsPost | null }
+const { cms } = Astro.props
+const config = loadConfig()
+const host = canonicalHost(config)
+const slug = Astro.params.slug!
+
+// ── CMS page branch data (owner's real page rendered at /<slug>/) ──
+const siteForms = cms ? await fetchForms(config) : []
+const cmsContentHtml = cms ? injectCtaBlocks(injectFormEmbeds(cms.content, siteForms, config, `/${cms.slug}/`)) : ""
+// Turnstile loads only when an actual form widget landed (zero-JS covenant).
+const cmsHasForm = cmsContentHtml.includes("cf-turnstile")
+
+// ── Trust-page branch data (generated E-E-A-T pages, unchanged K1 behavior) ──
+const dated = `Last updated: ${config.generatedAt}`
+const pages: Record<string, { title: string; body: string }> = {
+  about: {
+    title: `About ${config.name}`,
+    body: `
+      <p>${config.name} is dedicated to ${config.niche}. We publish practical, carefully researched
+      articles so you can make better decisions without wading through fluff.</p>
+      <p>The site is run by ${config.ownerName}. Every article is reviewed against our
+      <a href="/editorial/">editorial policy</a> before it is published.</p>
+      <p>Questions or suggestions? <a href="/contact/">Get in touch</a> — we read everything.</p>`,
+  },
+  contact: {
+    title: `Contact ${config.name}`,
+    body:
+      config.turnstileSitekey && config.formsEndpoint
+        ? `
+      <p>We'd love to hear from you — corrections, questions, and topic suggestions are all welcome.</p>
+      <form method="POST" action="${config.formsEndpoint}" style="max-width:28rem">
+        <p><label>Your email<br><input type="email" name="email" required
+          style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px"></label></p>
+        <p><label>Message<br><textarea name="message" required rows="6" maxlength="4000"
+          style="width:100%;padding:0.5rem;border:1px solid #ccc;border-radius:6px"></textarea></label></p>
+        <div class="cf-turnstile" data-sitekey="${config.turnstileSitekey}"></div>
+        <p><button type="submit" data-ev="form:submit" style="background:#0a6152;color:#fff;border:none;border-radius:6px;padding:0.6rem 1.2rem;font-size:1rem;cursor:pointer">Send</button></p>
+      </form>
+      <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+      <p>Prefer email? <a href="mailto:${config.ownerEmail}">${config.ownerEmail}</a>.</p>`
+        : `
+      <p>We'd love to hear from you — corrections, questions, and topic suggestions are all welcome.</p>
+      <p>Email us at <a href="mailto:${config.ownerEmail}">${config.ownerEmail}</a> and we'll get back
+      to you as soon as we can.</p>
+      <p>For matters covered by our policies, see the <a href="/privacy/">privacy policy</a> and
+      <a href="/terms/">terms of service</a>.</p>`,
+  },
+  privacy: {
+    title: `Privacy Policy — ${config.name}`,
+    body: `
+      <p>This policy describes how ${config.name} (https://${host}) handles information when you visit.</p>
+      <h2>What we collect</h2>
+      <p>This site is fully static and sets no first-party cookies for browsing. We use
+      privacy-respecting, aggregate analytics (Cloudflare Web Analytics) that does not use cookies,
+      does not fingerprint you, and does not track you across sites.</p>
+      <h2>What we don't do</h2>
+      <p>We do not sell, rent, or share personal information. We do not run third-party advertising
+      trackers. If you email us at ${config.ownerEmail}, we use your address only to reply.</p>
+      <h2>Third-party links</h2>
+      <p>Articles may link to other websites (including affiliate links — see our
+      <a href="/disclosure/">disclosure</a>). Their privacy practices are their own.</p>
+      <h2>Contact</h2>
+      <p>Privacy questions: <a href="mailto:${config.ownerEmail}">${config.ownerEmail}</a>.</p>`,
+  },
+  terms: {
+    title: `Terms of Service — ${config.name}`,
+    body: `
+      <p>By using https://${host} you agree to these terms.</p>
+      <h2>Content</h2>
+      <p>All content is provided for general information about ${config.niche}. It is not professional
+      advice; always use your own judgment and consult a professional where decisions matter.</p>
+      <h2>Intellectual property</h2>
+      <p>Content on this site is © ${config.name} unless otherwise noted. You may quote brief excerpts
+      with attribution and a link; wholesale republication is not permitted.</p>
+      <h2>Liability</h2>
+      <p>The site is provided "as is" without warranties. To the maximum extent permitted by law,
+      ${config.name} is not liable for losses arising from use of the site.</p>
+      <h2>Contact</h2>
+      <p>Questions about these terms: <a href="mailto:${config.ownerEmail}">${config.ownerEmail}</a>.</p>`,
+  },
+  disclosure: {
+    title: `Affiliate & Advertising Disclosure — ${config.name}`,
+    body: `
+      <p>Some links on ${config.name} are affiliate links: if you buy through them, we may earn a
+      commission at no extra cost to you. This is how the site funds its research and writing
+      about ${config.niche}.</p>
+      <p>Commissions never decide our recommendations. We only recommend products and services we
+      believe are genuinely useful, per our <a href="/editorial/">editorial policy</a>, and we
+      disclose material connections in line with FTC guidance.</p>`,
+  },
+  cookies: {
+    title: `Cookie Policy — ${config.name}`,
+    body: `
+      <p>${config.name} sets <strong>no cookies</strong> for normal browsing. The site is static and
+      our analytics (Cloudflare Web Analytics) is cookie-free by design.</p>
+      <p>If embedded third-party content ever sets its own cookies, that will be governed by the
+      third party's policy and disclosed on the page where it appears.</p>`,
+  },
+  editorial: {
+    title: `Editorial Policy — ${config.name}`,
+    body: `
+      <p>Every article on ${config.name} follows the same rules:</p>
+      <ul>
+        <li><strong>Accuracy first.</strong> Claims about ${config.niche} are checked against primary
+        sources; when facts change, articles are updated and the update date is shown.</li>
+        <li><strong>Independence.</strong> Affiliate relationships (see the
+        <a href="/disclosure/">disclosure</a>) never determine conclusions.</li>
+        <li><strong>Corrections.</strong> Found an error? Email
+        <a href="mailto:${config.ownerEmail}">${config.ownerEmail}</a> and we'll fix it promptly.</li>
+      </ul>`,
+  },
+}
+const trustPage = cms ? null : pages[slug]
+
+// Local SEO profile (V1.3): the contact page shows the primary location's NAP
+// block + LocalBusiness schema. Empty for non-local sites — byte-identical.
+const locations = !cms && slug === "contact" ? await fetchLocations(config) : []
+const primary = locations.find((l) => l.isPrimary) ?? locations[0]
+const napHtml = primary ? napBlockHtml(primary) : ""
+const contactLd = primary ? localBusinessLd(primary, `https://${host}/`, `https://${host}/contact/`) : null
+const contactSchema = contactLd ? { "@context": "https://schema.org", ...contactLd } : null
+---
+{cms ? (
+  <Base
+    title={cms.seoTitle ?? `${cms.title} — ${config.name}`}
+    description={cms.seoDescription ?? cms.excerpt ?? config.niche}
+    path={`/${cms.slug}/`}
+    robots={computeRobots(cms.noIndex, cms.nofollow)}
+    canonicalOverride={cms.canonicalUrl ?? null}
+    ogTitle={cms.ogTitle ?? null}
+    ogDescription={cms.ogDescription ?? null}
+    ogImage={cms.ogImage ?? null}
+  >
+    <article>
+      <h1>{cms.title}</h1>
+      <div set:html={cmsContentHtml} />
+    </article>
+    {cmsHasForm && config.turnstileSitekey && <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>}
+  </Base>
+) : (
+  <Base title={trustPage!.title} description={`${trustPage!.title}.`} path={`/${slug}/`} schema={contactSchema}>
+    <h1>{trustPage!.title}</h1>
+    <p style="color:#777;font-size:0.85rem">{dated}</p>
+    <div set:html={trustPage!.body} />
+    {napHtml && <div set:html={napHtml} />}
+  </Base>
+)}
